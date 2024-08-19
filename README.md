@@ -18,6 +18,9 @@ Tested on esp32-s3, this model supports Bluetooth Low Energy but does not suppor
 # Future features
 Use JSON to iterate over the settings of esp32 in Android and use the description of the settings. The description uses the type of the settings (boolean, integer, decimal, string, optional) and the limit value (maximum, minimum, default, read-only). In the case of optional, the selection item is set as a string. You can know how many settings there are at the stage of iterating over the settings. After the iteration, according to the description of the settings, the Android app is dynamically generated based on what the ESP32 responds to on the screen, such as switches, edittext, combo boxes, spinners, etc.
 
+# Storage variable conditions
+The string length of the setting name, value, default value, and summary is up to 32 characters.
+summary can use non-ascii strings, but name can only use ascii.
 
 # This project is outdated and no longer supported. Please check out my new code on [Github](https://github.com/beegee-tokyo/RAK4631-LoRa-BLE-Config)
 
