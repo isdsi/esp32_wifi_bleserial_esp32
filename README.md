@@ -22,6 +22,9 @@ Use JSON to iterate over the settings of esp32 in Android and use the descriptio
 The string length of the setting name, value, default value, and summary is up to 32 characters.
 summary can use non-ascii strings, but name can only use ascii.
 
+# CRC32 license
+https://github.com/bakercp/CRC32/blob/master/LICENSE.md
+
 # This project is outdated and no longer supported. Please check out my new code on [Github](https://github.com/beegee-tokyo/RAK4631-LoRa-BLE-Config)
 
 # ESP32 WiFi credential setup over BLE
