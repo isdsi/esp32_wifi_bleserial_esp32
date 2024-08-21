@@ -25,6 +25,25 @@ summary can use non-ascii strings, but name can only use ascii.
 # CRC32 license
 https://github.com/bakercp/CRC32/blob/master/LICENSE.md
 
+# SPIFFS file system capacity exceeded test
+custompart.csv attempted to test in the following situation.
+spiffers, data, spiffs, 0x3F1000,0xF000,
+
+When creating a partition in the data folder, the total capacity is 49196, the used capacity is 1004, and the free capacity is 48192.
+
+In PowerShell, create a file with a capacity of 48192 with the command below and try to upload and download it. Failed
+fsutil file createnew data\freeByte.txt 48192
+
+When creating a partition in the data folder, the total capacity is 49196, and the used capacity is 1004.
+Displayed total capacity is 48192 * 0.8 = 39356, and displayed used capacity is 14.
+In PowerShell, create a file with a capacity of 39342 with the command below and try to upload and download it. Success. 39356 - 14(test.txt) = 39342
+fsutil file createnew fre39342.txt 39342
+
+In Powershell, create a file with a capacity of 39343 with the command below and try to upload and download it. Failed. 39356 - 14(test.txt) = 39342 < 39343
+fsutil file createnew fre39343.txt 39343
+
+
+
 # This project is outdated and no longer supported. Please check out my new code on [Github](https://github.com/beegee-tokyo/RAK4631-LoRa-BLE-Config)
 
 # ESP32 WiFi credential setup over BLE

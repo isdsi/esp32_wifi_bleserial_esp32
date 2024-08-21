@@ -393,6 +393,7 @@ String ble_read_string;
 String ble_file_name;
 size_t ble_file_size;
 uint32_t ble_file_crc = 0;
+const uint8_t ble_file_timeout_100ms = 30;
 int ble_config_index;
 
 void BleSerial_decode(uint8_t *value, uint32_t value_size)
@@ -437,6 +438,8 @@ void BleSerial_encode(uint8_t *value, uint32_t value_size)
 
 bool spiffs_mount = false;
 
+extern size_t transmitBufferLength;
+
 CRC32 crc;
 
 void listDirToJson(fs::FS &fs, const char * dirname, uint8_t levels, JsonArray &jaFileName, JsonArray &jaFileSize){
@@ -475,8 +478,51 @@ void listDirToJson(fs::FS &fs, const char * dirname, uint8_t levels, JsonArray &
     }
 }
 
+bool listDirSize(fs::FS &fs, const char * dirname, const char *filename_to_except, size_t *size){
+    Serial.printf("Listing directory: %s\r\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return false;
+    }
+    if(!root.isDirectory()){
+        Serial.println(" - not a directory");
+        return false;
+    }
+
+	size_t s = 0;
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+			/*
+            // support only 1 level.
+			if(levels){
+                listDir(fs, file.path(), levels -1);
+            }
+			*/
+        } else {			
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+        }
+		if (filename_to_except != NULL && strcmp(file.name(), filename_to_except) == 0) {
+	        file = root.openNextFile();
+			continue;		
+		}
+		s += file.size();
+        file = root.openNextFile();
+    }
+	if (size != NULL) 
+		*size = s;
+	return true;
+}
+
 bool getFileSize(fs::FS &fs, const char * path, size_t *size){
-    Serial.printf("getSize file: %s\r\n", path);
+    Serial.printf("Getting file size: %s\r\n", path);
 
     File file = fs.open(path);
     if(!file || file.isDirectory()){
@@ -491,7 +537,7 @@ bool getFileSize(fs::FS &fs, const char * path, size_t *size){
 }
 
 bool getFileCRC(fs::FS &fs, const char * path, uint32_t *checksum){
-    Serial.printf("Reading file: %s\r\n", path);
+    Serial.printf("Getting file crc: %s\r\n", path);
 
     File file = fs.open(path);
     if(!file || file.isDirectory()){
@@ -499,8 +545,8 @@ bool getFileCRC(fs::FS &fs, const char * path, uint32_t *checksum){
         return false;
     }
 
-    Serial.println("- read from file:");
 	char c;
+	crc.reset();
     while(file.available()){
 		c = file.read();
 		crc.update(c);
@@ -519,23 +565,36 @@ bool readFile(fs::FS &fs, const char * path){
         Serial.println("- failed to open file for reading");
         return false;
     }
-
-	size_t s = 0;
-    char c;
-    while(file.available()){
-		c = file.read();
-		BleSerial_write(c);
-		s++;
-		esp_task_wdt_reset();
-    }
-	BleSerial_flush();
-	Serial.print("write ");
-	Serial.println(s);
+	uint32_t timer100ms = millis() / 100;
+	int size = file.available();
+	while(size > 0){
+		timer100ms = millis() / 100;		
+		int payload = 256;
+		uint32_t bytes_to_read;
+		if (size - payload >= 0) {
+			bytes_to_read = payload;
+		} else {
+			bytes_to_read = size;
+		}
+		Serial.print("r");
+		Serial.println(bytes_to_read);
+		file.read(ble_write_buffer, bytes_to_read);
+		BleSerial_write(ble_write_buffer, bytes_to_read); // BleSerial_flush inside
+		size -= bytes_to_read;
+		delay(1);
+		if ((millis() / 100) - timer100ms > ble_file_timeout_100ms) {
+			break;
+		}
+	}
     file.close();
+	if ((millis() / 100) - timer100ms > ble_file_timeout_100ms) {
+		Serial.println("timeout");
+        return false;
+	}
 	return true;
 }
 
-bool writeFile(fs::FS &fs, const char * path, size_t size){
+bool writeFile(fs::FS &fs, const char * path, int size){
     Serial.printf("Writing file: %s\r\n", path);
 
     File file = fs.open(path, FILE_WRITE);
@@ -543,25 +602,30 @@ bool writeFile(fs::FS &fs, const char * path, size_t size){
         Serial.println("- failed to open file for writing");
         return false;
     }
-	size_t s = 0;
-    char c;	
-	unsigned long tick = millis();
-    while(size > 0){
-		if (BleSerial_available()) {
-			c = BleSerial_read();
-			file.write(c);
-			size--;
-			s++;
+
+	uint32_t timer100ms = millis() / 100;
+    while(size > 0) {
+		if (BleSerial_available() > 0) { 
+			timer100ms = millis() / 100;		
+			uint32_t bytes_to_write;
+			if (size - BleSerial_available() >= 0) {
+				bytes_to_write = BleSerial_available();
+			} else {
+				bytes_to_write = size;
+			}
+			BleSerial_readBytes(ble_read_buffer, bytes_to_write);
+			Serial.print("w");
+			Serial.println(bytes_to_write);
+			file.write(ble_read_buffer, bytes_to_write);
+			size -= bytes_to_write;
 		}
-		if (millis() - tick > 1000) {
+		if ((millis() / 100) - timer100ms > ble_file_timeout_100ms) {
 			break;
 		}
 		esp_task_wdt_reset();
     }
-	Serial.print("write ");
-	Serial.println(s);
     file.close();
-	if (millis() - tick > 1000) {
+	if ((millis() / 100) - timer100ms > ble_file_timeout_100ms) {
 		Serial.println("timeout");
         return false;
 	}
@@ -702,7 +766,7 @@ void ReadBLESerialTask(void *e)
 			}
 			if (jo.containsKey("reset"))
 			{
-				ble_state = 300;
+				ble_state = 310;
 				break;		
 			}
 			
@@ -788,8 +852,12 @@ void ReadBLESerialTask(void *e)
 			jo["read"] = "filesystem";
 			if (spiffs_mount) {
 				jo["result"] = "ok";
-				jo["totalBytes"] = SPIFFS.totalBytes();
-				jo["usedBytes"] = SPIFFS.usedBytes();
+				size_t totalBytes;
+				totalBytes = SPIFFS.totalBytes() * 0.80; // filesystem use at least 20% of partition
+				jo["totalBytes"] = totalBytes;
+				size_t usedBytes; // it means entire size of all files
+				listDirSize(SPIFFS, "/", NULL, &usedBytes); 
+				jo["usedBytes"] = usedBytes;
 			} else {
 				jo["result"] = "failed not mount";
 			}
@@ -866,10 +934,6 @@ void ReadBLESerialTask(void *e)
 			} else {
 				joWrite["result"] = "failed not mount";
 			}
-			if (joWrite["result"] != "ok") {
-				ble_state = 100;
-				break;
-			}
 
 			ble_read_string = "";
 			ble_write_string = ""; joWrite.printTo(ble_write_string);
@@ -880,7 +944,11 @@ void ReadBLESerialTask(void *e)
 			memcpy(ble_write_buffer, (void*)&ble_write_string[0], ble_write_string.length());
 			BleSerial_encode(ble_write_buffer, ble_write_count);
 			BleSerial_write(ble_write_buffer, ble_write_count);
-			ble_state_timer100ms = 5; // give time android to get ready
+			if (joWrite["result"] != "ok") {
+				ble_state = 100;
+				break;
+			}
+			ble_state_timer100ms = 1; // give time android to get ready
 			ble_state++;
 			break;
 		}
@@ -944,13 +1012,15 @@ void ReadBLESerialTask(void *e)
 		case 260: // write file
 		{
 			jsonBuffer.clear();
-
+			Serial.println("1");
 			JsonObject& joRead = jsonBuffer.parseObject(ble_read_string);
 			if (joRead.success() == false) {
+				Serial.println("json parse failed");
 				ble_state = 100;
 				break;
 			}
 
+			Serial.println("2");
 			JsonObject& joWrite = jsonBuffer.createObject();
 			joWrite["write"] = "file";
 			ble_file_name = "";
@@ -963,9 +1033,20 @@ void ReadBLESerialTask(void *e)
 					ble_file_name = joRead["fileName"].as<String>();
 					ble_file_size = joRead["fileSize"].as<size_t>();
 					ble_file_crc = joRead["fileCRC"].as<uint32_t>();
-					if (SPIFFS.totalBytes() - SPIFFS.usedBytes() > ble_file_size) {
+					size_t totalBytes;
+					totalBytes = SPIFFS.totalBytes() * 0.80; // // filesystem use at least 20% of partition
+					size_t usedBytes; // it means entire size of all files
+					listDirSize(SPIFFS, "/", 
+						&ble_file_name[1], // without '/'
+						&usedBytes); // 
+					if (totalBytes - usedBytes >= ble_file_size) {
 						joWrite["result"] = "ok";
 					} else {
+						Serial.print(totalBytes);
+						Serial.print("-");
+						Serial.print(usedBytes);
+						Serial.print(">");
+						Serial.println(ble_file_size);
 						joWrite["result"] = "failed too large size";
 					}
 				} else {
@@ -974,11 +1055,7 @@ void ReadBLESerialTask(void *e)
 			} else {
 				joWrite["result"] = "failed not mount";
 			}
-			if (joWrite["result"] != "ok") {
-				ble_state = 100;
-				break;
-			}
-
+			Serial.println("3");
 			ble_read_string = "";
 			ble_write_string = ""; joWrite.printTo(ble_write_string);
 			jsonBuffer.clear();
@@ -988,6 +1065,10 @@ void ReadBLESerialTask(void *e)
 			memcpy(ble_write_buffer, (void*)&ble_write_string[0], ble_write_string.length());
 			BleSerial_encode(ble_write_buffer, ble_write_count);
 			BleSerial_write(ble_write_buffer, ble_write_count);
+			if (joWrite["result"] != "ok") {
+				ble_state = 100;
+				break;
+			}
 			ble_state_timer100ms = 0; 
 			ble_state++;
 			break;
@@ -996,11 +1077,37 @@ void ReadBLESerialTask(void *e)
 				
 		case 261:
 		{
-			if (writeFile(SPIFFS, (char*)&ble_file_name[0], ble_file_size) == false)
-			{
-				ble_state = 100;
-				break;
-			}
+			// Json object for outgoing data 
+			JsonObject& jo = jsonBuffer.createObject();
+			jo["write"] = "file";
+
+			if (writeFile(SPIFFS, (char*)&ble_file_name[0], ble_file_size)) {
+				uint32_t crc_value = 0;
+				if (getFileCRC(SPIFFS, (char*)&ble_file_name[0], &crc_value)) {
+					if (ble_file_crc == crc_value) {
+						jo["result"] = "ok";		
+					} else {
+						jo["result"] = "failed crc";
+					}
+				} else {
+					jo["result"] = "failed get file crc";
+				}
+			} else {
+				jo["result"] = "failed write file";
+			} 
+			// cannot know if ble_file_size == 0 because of error during file transferring
+			/*
+			ble_read_string = "";
+			ble_write_string = ""; jo.printTo(ble_write_string);
+			jsonBuffer.clear();
+			ble_write_count = ble_write_string.length();
+			Serial.print("ws ");
+			Serial.println(ble_write_string);			
+			memcpy(ble_write_buffer, (void*)&ble_write_string[0], ble_write_string.length());
+			BleSerial_encode(ble_write_buffer, ble_write_count);
+			BleSerial_write(ble_write_buffer, ble_write_count);
+			ble_state_timer100ms = 0; 
+			*/
 			ble_state = 100;
 			break;
 		}
@@ -1055,9 +1162,8 @@ void ReadBLESerialTask(void *e)
 
 void setup() {
 	// Initialize Serial port
-	//Serial.begin(115200);
-	Serial.begin(115200, SERIAL_8N1, 18, 17);
-
+	Serial.begin(115200);
+	
 	// Send some device info
 	Serial.print("Build: ");
 	Serial.println(compileDate);
