@@ -18,6 +18,31 @@ Tested on esp32-s3, this model supports Bluetooth Low Energy but does not suppor
 # Future features
 Use JSON to iterate over the settings of esp32 in Android and use the description of the settings. The description uses the type of the settings (boolean, integer, decimal, string, optional) and the limit value (maximum, minimum, default, read-only). In the case of optional, the selection item is set as a string. You can know how many settings there are at the stage of iterating over the settings. After the iteration, according to the description of the settings, the Android app is dynamically generated based on what the ESP32 responds to on the screen, such as switches, edittext, combo boxes, spinners, etc.
 
+# Storage variable conditions
+The string length of the setting name, value, default value, and summary is up to 32 characters.
+summary can use non-ascii strings, but name can only use ascii.
+
+# CRC32 license
+https://github.com/bakercp/CRC32/blob/master/LICENSE.md
+
+# SPIFFS file system capacity exceeded test
+custompart.csv attempted to test in the following situation.
+spiffers, data, spiffs, 0x3F1000,0xF000,
+
+When creating a partition in the data folder, the total capacity is 49196, the used capacity is 1004, and the free capacity is 48192.
+
+In PowerShell, create a file with a capacity of 48192 with the command below and try to upload and download it. Failed
+fsutil file createnew data\freeByte.txt 48192
+
+When creating a partition in the data folder, the total capacity is 49196, and the used capacity is 1004.
+Displayed total capacity is 48192 * 0.8 = 39356, and displayed used capacity is 14.
+In PowerShell, create a file with a capacity of 39342 with the command below and try to upload and download it. Success. 39356 - 14(test.txt) = 39342
+fsutil file createnew fre39342.txt 39342
+
+In Powershell, create a file with a capacity of 39343 with the command below and try to upload and download it. Failed. 39356 - 14(test.txt) = 39342 < 39343
+fsutil file createnew fre39343.txt 39343
+
+
 
 # This project is outdated and no longer supported. Please check out my new code on [Github](https://github.com/beegee-tokyo/RAK4631-LoRa-BLE-Config)
 
